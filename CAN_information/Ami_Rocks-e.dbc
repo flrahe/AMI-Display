@@ -1,0 +1,69 @@
+VERSION ""
+
+
+NS_ :
+
+BS_:
+
+BU_: Vector__XXX
+
+BO_ 1409 ECU_Odo: 8 Vector__XXX
+SG_ ECU_Odometer : 32|24@1+ (0.1,0) [0|1] "km" Vector__XXX
+SG_ ECU_Speed : 56|8@1+ (1,0) [0|1] "km/h" Vector__XXX
+
+
+BO_ 1410 OBC_Remain: 8 Vector__XXX
+SG_ OBC_Remain_Chargetime : 0|16@1+ (1,0) [0|1] "" Vector__XXX
+
+
+BO_ 1427 BMS_12V_Batt_Voltage: 8 Vector__XXX
+SG_ BMS_12V_Batt_Voltage : 0|16@1+ (0.01,0) [0|655.35] "Volt" Vector__XXX
+
+
+BO_ 1428 BMS_45V_Temp: 8 Vector__XXX
+SG_ BMS_45V_Batt_Temperatur_1_NOK : 0|8@1- (1,0) [-128|127] "°C" Vector__XXX
+SG_ BMS_45V_Batt_Temperatur_2_NOK : 24|8@1- (1,0) [-128|127] "" Vector__XXX
+
+
+BO_ 1408 BMS_45V_Batt_V: 8 Vector__XXX
+SG_ BMS_45V_Batt_Current : 0|16@1- (0.1,0) [-3276.8|3276.7] "Ampere" Vector__XXX
+SG_ BMS_45V_Batt_Voltage : 16|16@1+ (0.01,0) [0|1] "Volt" Vector__XXX
+SG_ BMS_45V_Batt_SoC : 40|8@1+ (1,0) [0|1] "" Vector__XXX
+
+
+BO_ 1811 Display: 7 Vector__XXX
+SG_ gear : 7|2@1+ (1,0) [0|3] "" Vector__XXX
+SG_ remaining_distance : 0|7@1+ (1,0) [0|127] "" Vector__XXX
+SG_ manual_brake : 29|1@1+ (1,0) [0|1] "" Vector__XXX
+SG_ ready : 18|1@1+ (1,0) [0|1] "" Vector__XXX
+
+
+BO_ 1812 Status0: 2 Vector__XXX
+SG_ manual_brake : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+
+
+BA_DEF_  "BusType" STRING ;
+BA_DEF_ SG_  "GenSigStartValue" FLOAT -3.4E+038 3.4E+038;
+
+BA_DEF_DEF_  "BusType" "CAN";
+BA_DEF_DEF_  "GenSigStartValue" 0;
+
+BA_ "BusType" "CAN";
+
+BA_ "GenSigStartValue" SG_ 1409 ECU_Odometer 0;
+BA_ "GenSigStartValue" SG_ 1409 ECU_Speed 0;
+BA_ "GenSigStartValue" SG_ 1410 OBC_Remain_Chargetime 0;
+BA_ "GenSigStartValue" SG_ 1427 BMS_12V_Batt_Voltage 0;
+BA_ "GenSigStartValue" SG_ 1428 BMS_45V_Batt_Temperatur_1_NOK 0;
+BA_ "GenSigStartValue" SG_ 1428 BMS_45V_Batt_Temperatur_2_NOK 0;
+BA_ "GenSigStartValue" SG_ 1408 BMS_45V_Batt_Current 0;
+BA_ "GenSigStartValue" SG_ 1408 BMS_45V_Batt_Voltage 0;
+BA_ "GenSigStartValue" SG_ 1408 BMS_45V_Batt_SoC 0;
+BA_ "GenSigStartValue" SG_ 1811 gear 0;
+BA_ "GenSigStartValue" SG_ 1811 remaining_distance 0;
+BA_ "GenSigStartValue" SG_ 1811 manual_brake 0;
+BA_ "GenSigStartValue" SG_ 1811 ready 0;
+BA_ "GenSigStartValue" SG_ 1812 manual_brake 0;
+
+VAL_ 1811 gear 0 "R" 1 "N" 2 "D" 3 "Null" ;
+
