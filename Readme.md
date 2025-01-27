@@ -15,6 +15,10 @@ On this bus already some reasearch has been done. This project extends this by t
 
 I'm no professional programmer. So the code will not be very optimized and not very clean. If there is real interest I welcome other to help this project growing.
 
+<img src="./doc/images/AMI-Display.jpg" width=250>
+
+Picture of power fed into the battery during charging.
+
 ## Outlook
 This actual state is very basic and just the work of a few hours. Since there is interest in this state, the project is published as it is now. There is no good definitions of pins etc. This all needs to be done. Actually its less than a prove of conceptC and heavily work in progress.
 
