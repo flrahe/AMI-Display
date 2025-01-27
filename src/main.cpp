@@ -273,7 +273,7 @@ void plot_state()
 
 void plot_power()
 {
-    const float max_power = 3000;
+    const float max_power = 6000;
     const float min_power = 10000;
     int angle;
     canvas_power.clear();
@@ -343,7 +343,7 @@ void setup()
     canvas.setPaletteColor(1, GREEN);
     // canvas.setTextScroll(true);
 
-    canvas_power.createSprite(160, 151);
+    canvas_power.createSprite(160, 155);
     canvas_power.setFont(&fonts::FreeMonoBold18pt7b);
     canvas_power.setTextScroll(false);
 
