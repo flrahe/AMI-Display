@@ -22,13 +22,38 @@
 #include <WiFiUdp.h>
 #include <NTPClient.h>
 #include <WiFiMulti.h>
+#include <time.h>
 #include "secrets.h"
 
-RTC_DS3231 rtc;
-TwoWire myWire(1);
 
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "de.pool.ntp.org");
+#define CAN_SPEED CAN_SPEED_500KBPS
+#define CAN_TX_PIN GPIO_NUM_26
+#define CAN_RX_PIN GPIO_NUM_36
+
+
+#define RTC_IS_DS3231
+#ifdef RTC_IS_DS3231
+    #define RTC_SDA GPIO_NUM_17
+    #define RTC_SCL GPIO_NUM_16
+#endif
+
+
+#ifdef RTC_IS_DS3231
+    RTC_DS3231 rtc;
+    TwoWire myWire(1);
+    #define RTCSYNC
+    #define HAVERTC
+#endif
+
+
+
+
+
+
+#ifdef RTCSYNC
+    WiFiUDP ntpUDP;
+    NTPClient timeClient(ntpUDP, "de.pool.ntp.org");
+#endif
 
 String daysNames[] = {
     "Sunday",
@@ -71,9 +96,11 @@ const int interval_WifiReconnect = 30 * 1000;   // interval at which send CAN Me
 
 uint8_t count = 0;
 
+#ifdef RTCSYNC
 unsigned long previousMillis_RTCsync = 0;
 const int interval_RTCsync = 60 * 1000; // interval at which send CAN Messages (milliseconds)
 bool was_NTPoffline = true;
+#endif
 
 typedef struct
 {
@@ -107,9 +134,11 @@ typedef struct
 
 car_data_struct car_data;
 
+
 void init_RTC()
 {
-    myWire.begin(GPIO_NUM_17, GPIO_NUM_16, 100000);
+#ifdef RTC_IS_DS3231
+    myWire.begin(RTC_SDA, RTC_SCL, 100000);
     if (!rtc.begin(&myWire))
     {
         Serial.println("Couldn't find RTC");
@@ -119,7 +148,9 @@ void init_RTC()
         while (1)
             delay(10);
     }
+#endif
 }
+
 
 void init_wifi()
 {
@@ -137,6 +168,7 @@ void reconnect_wifi()
 
 void sync_rtc()
 {
+#ifdef RTCSYNC
     if (was_NTPoffline)
     {
         timeClient.begin(); // Start NTP client
@@ -146,6 +178,7 @@ void sync_rtc()
     timeClient.update();                                  // Retrieve current epoch time from NTP server
     unsigned long unix_epoch = timeClient.getEpochTime(); // Get epoch time
     rtc.adjust(DateTime(unix_epoch));
+#endif
 }
 
 
@@ -273,7 +306,7 @@ void plot_state()
 
 void plot_power()
 {
-    const float max_power = 6000;
+    const float max_power = 3000;
     const float min_power = 10000;
     int angle;
     canvas_power.clear();
@@ -343,7 +376,7 @@ void setup()
     canvas.setPaletteColor(1, GREEN);
     // canvas.setTextScroll(true);
 
-    canvas_power.createSprite(160, 155);
+    canvas_power.createSprite(160, 151);
     canvas_power.setFont(&fonts::FreeMonoBold18pt7b);
     canvas_power.setTextScroll(false);
 
@@ -353,9 +386,9 @@ void setup()
 
     init_wifi();
 
-    CAN_cfg.speed = CAN_SPEED_500KBPS;
-    CAN_cfg.tx_pin_id = GPIO_NUM_26;
-    CAN_cfg.rx_pin_id = GPIO_NUM_36;
+    CAN_cfg.speed = CAN_SPEED;
+    CAN_cfg.tx_pin_id = CAN_TX_PIN;
+    CAN_cfg.rx_pin_id = CAN_RX_PIN;
     CAN_cfg.rx_queue = xQueueCreate(rx_queue_size, sizeof(CAN_frame_t));
     // Init CAN Module
     canvas.println("Init CAN Module.....");
@@ -394,12 +427,20 @@ void loop()
             parse_can(&rx_frame);
         }
     }
+    else
+    {
+        delay(2);
+    }
 
     // // Display CAN Data
     if (currentMillis - previousMillis >= interval)
     {
         previousMillis = currentMillis;
+        #ifdef HAVERTC
         DateTime dt = rtc.now();
+        #else
+        unsigned long dt = millis()/1000;
+        #endif
 
         /* printing that data to the Serial port in a meaningful format */
         // Serial.println("************");
@@ -419,11 +460,19 @@ void loop()
 
         canvas.clear();
         canvas.setCursor(0,0);
+        #ifdef HAVERTC
         canvas.printf("%02i", dt.hour());
         canvas.print(":");
         canvas.printf("%02i", dt.minute());
         canvas.print(":");
         canvas.printf("%02i", dt.second());
+        #else
+        canvas.printf("%02i", dt/(60*60));
+        canvas.print(":");
+        canvas.printf("%02i", (dt/60)%60);
+        canvas.print(":");
+        canvas.printf("%02i", dt%60);
+        #endif
         canvas.println("");
         canvas.pushSprite(0, 0);
 
