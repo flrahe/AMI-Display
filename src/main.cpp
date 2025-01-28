@@ -199,16 +199,20 @@ void decode_batt48_state(uint8_t data[8])
 
     car_data.batt.voltage = ((int16_t)(data[3] << 8 | data[2])) / 100.0;
 
-    car_data.batt.power =  car_data.batt.voltage * car_data.batt.current;
+    // Smoothing of power calculation
+    // Values are quite dynamic
+    float help_power =  car_data.batt.voltage * car_data.batt.current;
+    float peak_power = 0.3*car_data.batt.power + 0.7*help_power;
+    car_data.batt.power = 0.6*car_data.batt.power + 0.4*help_power;
 
-    if (car_data.batt.power > car_data.batt.power_max )
+    if (peak_power > car_data.batt.power_max )
     {
-        car_data.batt.power_max = car_data.batt.power;
+        car_data.batt.power_max = peak_power;
     }
 
-    if (car_data.batt.power < car_data.batt.power_min )
+    if (peak_power < car_data.batt.power_min )
     {
-        car_data.batt.power_min = car_data.batt.power;
+        car_data.batt.power_min = peak_power;
     }
 
     car_data.batt.soc = (uint8_t)data[5];
