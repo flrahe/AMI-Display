@@ -81,7 +81,8 @@ String monthsNames[] = {
 char gears[5] = "RNDX";
 
 M5GFX display;
-M5Canvas canvas(&display);
+M5Canvas canvas_error(&display);
+M5Canvas canvas_time(&display);
 M5Canvas canvas_power(&display);
 M5Canvas canvas_state(&display);
 
@@ -138,25 +139,57 @@ car_data_struct car_data;
 void init_RTC()
 {
 #ifdef RTC_IS_DS3231
+    canvas_error.print("Initializing RTC... ");
+    canvas_error.pushSprite(0, 0);
     myWire.begin(RTC_SDA, RTC_SCL, 100000);
     if (!rtc.begin(&myWire))
     {
         Serial.println("Couldn't find RTC");
         Serial.flush();
-        canvas.println("Couldn't find RTC");
-        canvas.pushSprite(0, 0);
+        canvas_error.setTextColor(RED);
+        canvas_error.println(" NOK!");
+        canvas_error.pushSprite(0, 0);
+        canvas_error.setTextColor(GREEN);
         while (1)
-            delay(10);
+            delay(100);
     }
+    canvas_error.println(" Ok");
+    canvas_error.pushSprite(0, 0);
+
 #endif
 }
 
 
 void init_wifi()
 {
+
     if (WiFi.status() != WL_CONNECTED)
     {
+        canvas_error.setTextColor(GREEN);
+        canvas_error.print("Connecting to Wifi...");
+        canvas_error.pushSprite(0, 0);
+
         WiFi.begin(ssid, password);
+        uint8_t counter = 0;
+        while (WiFi.status() != WL_CONNECTED)
+        {
+            delay(100);
+            counter++;
+            if (counter > 10)
+            {
+                break;
+            }
+        }
+        if (WiFi.status() != WL_CONNECTED) {
+            canvas_error.setTextColor(RED);
+            canvas_error.println(" NOK!");
+            canvas_error.pushSprite(0, 0);
+        }
+        else {
+            canvas_error.setTextColor(GREEN);
+            canvas_error.println(" OK");
+            canvas_error.pushSprite(0, 0);
+        }
     }
 }
 
@@ -372,15 +405,26 @@ void setup()
 
     display.begin();
 
-    canvas.setColorDepth(1); // mono color
-    canvas.createSprite(150, 16);
+    canvas_time.setColorDepth(1); // mono color
+    canvas_time.createSprite(150, 16);
     // canvas.setFont(&fonts::Font0);
-    canvas.setFont(&fonts::FreeMono12pt7b);
-    canvas.setTextSize(1.0);
-    canvas.setPaletteColor(1, GREEN);
-    // canvas.setTextScroll(true);
+    canvas_time.setFont(&fonts::FreeMono12pt7b);
+    canvas_time.setTextSize(1.0);
+    canvas_time.setPaletteColor(1, GREEN);
 
-    canvas_power.createSprite(160, 151);
+    canvas_error.setColorDepth(8); // mono color
+    canvas_error.createSprite(display.width(), display.height());
+    // canvas.setFont(&fonts::Font0);
+    canvas_error.setFont(&fonts::FreeMono9pt7b);
+    canvas_error.setTextSize(1.0);
+    canvas_error.setPaletteColor(1, GREEN);
+    canvas_error.setPaletteColor(1, RED);
+    canvas_error.setTextScroll(true);
+    canvas_error.setTextColor(GREEN);
+    canvas_error.println("Basic Demo - AMI-Display");
+    canvas_error.pushSprite(0,0);
+
+    canvas_power.createSprite(160, 153);
     canvas_power.setFont(&fonts::FreeMonoBold18pt7b);
     canvas_power.setTextScroll(false);
 
@@ -395,9 +439,11 @@ void setup()
     CAN_cfg.rx_pin_id = CAN_RX_PIN;
     CAN_cfg.rx_queue = xQueueCreate(rx_queue_size, sizeof(CAN_frame_t));
     // Init CAN Module
-    canvas.println("Init CAN Module.....");
-    canvas.pushSprite(0, 0);
+    canvas_error.print("Init CAN Module...");
+    canvas_error.pushSprite(0, 0);
     ESP32Can.CANInit();
+    canvas_error.println(" Ok?");
+    canvas_error.pushSprite(0, 0);
 
     init_RTC();
     if (WiFi.status() == WL_CONNECTED)
@@ -405,7 +451,9 @@ void setup()
         /* Pushing that date/time to the RTC */
         sync_rtc();
     }
-
+    delay(1000);
+    canvas_error.clear();
+    canvas_error.pushSprite(0,0);
 
 }
 
@@ -446,39 +494,23 @@ void loop()
         unsigned long dt = millis()/1000;
         #endif
 
-        /* printing that data to the Serial port in a meaningful format */
-        // Serial.println("************");
-        // Serial.print(daysNames[dt.dayOfTheWeek()]);
-        // Serial.print(" ");
-        // Serial.print(monthsNames[dt.month()]);
-        // Serial.print(" ");
-        // Serial.print(dt.day());
-        // Serial.print(", ");
-        // Serial.println(dt.year());
-
-        // Serial.print(dt.hour());
-        // Serial.print(":");
-        // Serial.print(dt.minute());
-        // Serial.print(":");
-        // Serial.println(dt.second());
-
-        canvas.clear();
-        canvas.setCursor(0,0);
+        canvas_time.clear();
+        canvas_time.setCursor(0,0);
         #ifdef HAVERTC
-        canvas.printf("%02i", dt.hour());
-        canvas.print(":");
-        canvas.printf("%02i", dt.minute());
-        canvas.print(":");
-        canvas.printf("%02i", dt.second());
+        canvas_time.printf("%02i", dt.hour());
+        canvas_time.print(":");
+        canvas_time.printf("%02i", dt.minute());
+        canvas_time.print(":");
+        canvas_time.printf("%02i", dt.second());
         #else
-        canvas.printf("%02i", dt/(60*60));
-        canvas.print(":");
-        canvas.printf("%02i", (dt/60)%60);
-        canvas.print(":");
-        canvas.printf("%02i", dt%60);
+        canvas_time.printf("%02i", dt/(60*60));
+        canvas_time.print(":");
+        canvas_time.printf("%02i", (dt/60)%60);
+        canvas_time.print(":");
+        canvas_time.printf("%02i", dt%60);
         #endif
-        canvas.println("");
-        canvas.pushSprite(0, 0);
+        canvas_time.println("");
+        canvas_time.pushSprite(0, 0);
 
         plot_power();
         canvas_power.pushSprite(75, 40);
