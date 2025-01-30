@@ -30,6 +30,12 @@
 #define CAN_TX_PIN GPIO_NUM_26
 #define CAN_RX_PIN GPIO_NUM_36
 
+#define MAX_POWER_DISP 6000.0
+#define MIN_POWER_DISP -10000.0
+
+#define WIFI_WAIT 2
+
+
 
 #define RTC_IS_DS3231
 #ifdef RTC_IS_DS3231
@@ -175,7 +181,7 @@ void init_wifi()
         {
             delay(100);
             counter++;
-            if (counter > 10)
+            if (counter > WIFI_WAIT*10)
             {
                 break;
             }
@@ -184,6 +190,7 @@ void init_wifi()
             canvas_error.setTextColor(RED);
             canvas_error.println(" NOK!");
             canvas_error.pushSprite(0, 0);
+            canvas_error.setTextColor(GREEN);
         }
         else {
             canvas_error.setTextColor(GREEN);
@@ -299,42 +306,42 @@ void plot_state()
     canvas_state.clear();
     if (car_data.display.ready)
     {
-        color = TFT_GREEN;
+        color = GREEN;
         text = "Ready";
     }
     else {
-        color = TFT_RED;
+        color = RED;
         text = "Waiting";
     }
     canvas_state.fillRoundRect(0, 0, 100, 40, 5, color);
-    canvas_state.setTextColor(TFT_BLACK);
+    canvas_state.setTextColor(BLACK);
     canvas_state.setCursor(5, 10);
     canvas_state.setTextSize(1);
     canvas_state.print(text);
 
     if (car_data.display.hand_brake_active)
     {
-        color = TFT_RED;
+        color = RED;
         text = "Break!";
     }
     else {
-        color = TFT_GREEN;
+        color = GREEN;
         text = "OK";
     }
     canvas_state.fillRoundRect(110, 0, 100, 40, 5, color);
-    canvas_state.setTextColor(TFT_BLACK);
+    canvas_state.setTextColor(BLACK);
     canvas_state.setCursor(135, 10);
     canvas_state.setTextSize(1);
     canvas_state.print(text);
     if ((car_data.display.gear == 'N') || (car_data.display.gear == 'D'))
     {
-        color = TFT_GREEN;
+        color = GREEN;
     }
     else {
-        color = TFT_RED;
+        color = RED;
     }
     canvas_state.fillRoundRect(220, 0, 100, 40, 5, color);
-    canvas_state.setTextColor(TFT_BLACK);
+    canvas_state.setTextColor(BLACK);
     canvas_state.setCursor(255, 5);
     canvas_state.setTextSize(2);
     canvas_state.print(car_data.display.gear);
@@ -343,33 +350,31 @@ void plot_state()
 
 void plot_power()
 {
-    const float max_power = 3000;
-    const float min_power = 10000;
     int angle;
     canvas_power.clear();
-    canvas_power.drawArc(75, 75, 75, 74, 180, 360, TFT_RED);
-    canvas_power.drawArc(75, 75, 75, 74, 0, 180, TFT_GREEN);
+    canvas_power.drawArc(75, 75, 75, 74, 180, 360, RED);
+    canvas_power.drawArc(75, 75, 75, 74, 0, 180, GREEN);
 
-    angle = (int)(180 + abs(car_data.batt.power_min)/min_power*180.0);
+    angle = (int)(180 + abs(car_data.batt.power_min)/abs(MIN_POWER_DISP)*180.0);
     angle = angle > 360? 360 : angle;
-    canvas_power.drawArc(75, 75, 75, 60, 180, angle, TFT_RED);
+    canvas_power.drawArc(75, 75, 75, 60, 180, angle, RED);
 
-    angle = (int)(180 - car_data.batt.power_max/max_power*180.0);
+    angle = (int)(180 - car_data.batt.power_max/MAX_POWER_DISP*180.0);
     angle = angle < 0? 0 : angle;
-    canvas_power.drawArc(75, 75, 75, 60, angle, 180, TFT_GREEN);
+    canvas_power.drawArc(75, 75, 75, 60, angle, 180, GREEN);
 
     if (car_data.batt.power < 0){
-        angle = (int)(180 + abs(car_data.batt.power)/min_power*180.0);
+        angle = (int)(180 + abs(car_data.batt.power)/abs(MIN_POWER_DISP)*180.0);
         angle = angle > 360? 360 : angle;
-        canvas_power.fillArc(75, 75, 75, 60, 180, angle, TFT_RED);
-        canvas_power.setTextColor(TFT_RED);
+        canvas_power.fillArc(75, 75, 75, 60, 180, angle, RED);
+        canvas_power.setTextColor(RED);
     }
     else
     {
-        angle = (int)(180 - car_data.batt.power/max_power*180.0);
+        angle = (int)(180 - car_data.batt.power/MAX_POWER_DISP*180.0);
         angle = angle < 0? 0 : angle;
-        canvas_power.fillArc(75, 75, 75, 60, angle, 180, TFT_GREEN);
-        canvas_power.setTextColor(TFT_GREEN);
+        canvas_power.fillArc(75, 75, 75, 60, angle, 180, GREEN);
+        canvas_power.setTextColor(GREEN);
     }  
 
     canvas_power.setCursor(30, 60);
@@ -382,12 +387,12 @@ void plot_power()
     canvas_power.setTextSize(0.6);
     canvas_power.print("kW");
 
-    canvas_power.setTextColor(TFT_RED);
+    canvas_power.setTextColor(RED);
     canvas_power.setCursor(120, 0);
     canvas_power.setTextSize(0.5);
     canvas_power.printf("%+2.1f", car_data.batt.power_min/1000.0);
 
-    canvas_power.setTextColor(TFT_GREEN);
+    canvas_power.setTextColor(GREEN);
     canvas_power.setCursor(120, 140);
     canvas_power.setTextSize(0.5);
     canvas_power.printf("%+2.1f", car_data.batt.power_max/1000.0);
