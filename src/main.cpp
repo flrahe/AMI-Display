@@ -28,15 +28,18 @@
 
 
 #ifdef RTC_IS_DS3231
-    RTC_DS3231 rtc;
-    TwoWire myWire(1);
-    #define RTCSYNC
-    #define HAVERTC
-    #define NEET_RTC_LIB
+    #define NEED_RTC_LIB
 #endif
 
 #ifdef NEED_RTC_LIB
     #include <RTClib.h>
+    #include <Wire.h>
+    #define RTCSYNC
+    #define HAVERTC
+    #ifdef RTC_IS_DS3231
+        RTC_DS3231 rtc;
+        TwoWire myWire(1);
+    #endif
 #endif
 
 
@@ -329,6 +332,7 @@ void decode_batt12_state(uint8_t data[8])
     car_data.batt.voltage12 = (data[1] << 8 | data[0]) / 100.0;
 }
 
+uint16_t read_state=0;
 void parse_can(CanFrame rx_frame)
 {
     switch (rx_frame.identifier)
@@ -351,6 +355,22 @@ void parse_can(CanFrame rx_frame)
     default:
         break;
     }
+
+    if (read_state==200) {
+        canvas_bus_led.setColor(GREEN);
+        canvas_bus_led.fillCircle(10, 10, 4);
+        canvas_bus_led.pushSprite(300,0);
+    }
+    else if (read_state>=400)
+    {
+        read_state=0;
+        canvas_bus_led.clear();
+        // canvas_write_led.setColor(GREEN);
+        // canvas_write_led.fillCircle(10, 10, 7);
+        canvas_bus_led.pushSprite(300,0);
+    }
+    read_state++;
+
 }
 
 void plot_state()
@@ -485,7 +505,6 @@ void plot_power()
     }
 
 
-    uint32_t write_state=0;
     void write_CAN_buffer()
     {
         size_t written = myfile.write(canBuffer, bufferPointer);
@@ -521,20 +540,6 @@ void plot_power()
             // str_len = sprintf(data, "%12d) %12d %04X %1i", msg_counter, millis(), rx_frame->MsgID, rx_frame->FIR.B.DLC);
             // Serial.println(data);
         }
-        if (write_state==200) {
-            canvas_bus_led.setColor(GREEN);
-            canvas_bus_led.fillCircle(10, 10, 4);
-            canvas_bus_led.pushSprite(300,0);
-        }
-        else if (write_state>=400)
-        {
-            write_state=0;
-            canvas_bus_led.clear();
-            // canvas_write_led.setColor(GREEN);
-            // canvas_write_led.fillCircle(10, 10, 7);
-            canvas_bus_led.pushSprite(300,0);
-        }
-        write_state++;
 
     }
 #endif
