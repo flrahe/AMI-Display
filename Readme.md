@@ -41,7 +41,7 @@ A few things which are planned to be included:
 ## Setup
 This project is a PlatformIO project in VSCode. "Just" clone or download this repository and open it in VSCode with PlatformIO plugin installed. This hopefully installs all needed libraries and frameworks.
 
-There are three profiles defined in [platform.ini](platform.ini) which contain most configuration for the three devices
+There are three profiles defined in [platformio.ini](platformio.ini) which contain most configuration for the three devices
 - Core
 - Core2
 - CoreS3.
