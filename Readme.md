@@ -41,6 +41,13 @@ A few things which are planned to be included:
 ## Setup
 This project is a PlatformIO project in VSCode. "Just" clone or download this repository and open it in VSCode with PlatformIO plugin installed. This hopefully installs all needed libraries and frameworks.
 
+There are three profiles defined in [platform.ini](platform.ini) which contain most configuration for the three devices
+- Core
+- Core2
+- CoreS3.
+
+Unfortunetely I can only test on Core and CoreS3.
+
 ### secrets.h
 You have to create a secrets.h file in te src directory. An example is put in [secrets_example.h](./src/secrets_example.h). Here you have to put your wifi credentials. The secrets.h is in the gitignore not to accidentially upload it to github.
 
@@ -63,8 +70,8 @@ Newer m5 have an RTC included, but it is actually not used in this version of th
 I'm using [Unit CAN](https://docs.m5stack.com/en/unit/can) for CAN communication. I tested the COMMU module, but I could not get the MCP2515 working. Several other reported problems with that module too. The Unit CAN worked immediatley and so far reliable. And ***"The built-in DC-DC isolated power chip can isolate noise and interference and prevent damage to sensitive circuits."*** So it seems to be a good choice.
 
 The module is connected via UART:
-* RX of module -> PIN36 of m5
-* TX of module -> PIN26 of m5
+* RX of module -> PIN35 of m5
+* TX of module -> PIN25 of m5
 
 The wiring of the can side is straightforward:
 * H -> CAN High at ODB2 (pin 6)
