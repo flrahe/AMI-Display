@@ -1,0 +1,132 @@
+/**
+ * @file Listen.ino
+ * @author SeanKwok (shaoxiang@m5stack.com)
+ * @brief
+ * @version 0.1
+ * @date 2024-02-27
+ *
+ *
+ * @Hardwares: M5Core + M5Unit-CAN
+ * @Platform Version: Arduino M5Stack Board Manager v2.1.0
+ * @Dependent Library:
+ */
+#include <M5Unified.h>
+// #include "Arduino.h"
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include "freertos/FreeRTOS.h"
+// #include "freertos/task.h"
+// #include "freertos/queue.h"
+// #include "freertos/semphr.h"
+// #include <esp_err.h>
+// #include <esp_log.h>
+// #include <driver/twai.h>
+#include <ESP32-TWAI-CAN.hpp>
+
+/* --------------------- Definitions and static variables ------------------ */
+// Example Configuration
+#define RX_TASK_PRIO 9
+#define TX_GPIO_NUM  gpio_num_t(5)
+#define RX_GPIO_NUM  gpio_num_t(10)
+#define EXAMPLE_TAG  "TWAI Listen Only"
+
+
+
+CanFrame rxFrame;
+
+// static const twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+// static const twai_timing_config_t t_config = TWAI_TIMING_CONFIG_25KBITS();
+// static const twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
+// static const twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
+// Set TX queue length to 0 due to listen only mode
+// static const twai_general_config_t g_config = {
+//     .mode           = TWAI_MODE_LISTEN_ONLY,
+//     .tx_io          = TX_GPIO_NUM,
+//     .rx_io          = RX_GPIO_NUM,
+//     .clkout_io      = TWAI_IO_UNUSED,
+//     .bus_off_io     = TWAI_IO_UNUSED,
+//     .tx_queue_len   = 0,
+//     .rx_queue_len   = 1,
+//     .alerts_enabled = TWAI_ALERT_NONE,
+//     .clkout_divider = 0};
+
+/* --------------------------- Tasks and Functions -------------------------- */
+
+// static void twai_receive_task(void *arg) {
+    
+
+//     while (1) {
+//         twai_receive(&rx_msg, portMAX_DELAY);
+
+//         Serial.printf("received identifier: 0x%02X\r\n", rx_msg.identifier);
+//         // rx_msg.data
+//         Serial.print("received data: ");
+//         for (int i = 0; i < rx_msg.data_length_code; i++) {
+//             Serial.printf("0x%02X ", rx_msg.data[i]);
+//         }
+//         Serial.println();
+//     }
+
+//     vTaskDelete(NULL);
+// }
+
+void setup(void) {
+    M5.begin();
+    Serial.begin(115200);
+    delay(500);
+    // Install and start TWAI driver
+    Serial.println("Starting");
+    Serial.flush();
+    Serial.println("Installing driver");
+    ESP32Can.setPins(CAN_TX, CAN_RX);
+    ESP32Can.setRxQueueSize(20);
+	ESP32Can.setTxQueueSize(5);
+    ESP32Can.setSpeed(ESP32Can.convertSpeed(500));
+
+    if(ESP32Can.begin()) {
+        Serial.println("CAN bus started!");
+    } else {
+        Serial.println("CAN bus failed!");
+    }
+    // Serial.println(twai_driver_install(&g_config, &t_config, &f_config));
+    // Serial.println(twai_start());
+    // ESP_ERROR_CHECK(twai_driver_install(&g_config, &t_config, &f_config));
+    // ESP_LOGI(EXAMPLE_TAG, "Driver installed");
+    // ESP_ERROR_CHECK(twai_start());
+    // ESP_LOGI(EXAMPLE_TAG, "Driver started");
+
+    // xTaskCreatePinnedToCore(twai_receive_task, "TWAI_rx", 4096, NULL,
+    //                         RX_TASK_PRIO, NULL, tskNO_AFFINITY);
+}
+
+// twai_message_t rx_msg;
+// esp_err_t error;
+void loop() {
+    
+    // error = twai_receive(&rx_msg, 1 * portTICK_PERIOD_MS);
+
+    // if (error == ESP_OK) {
+    //     Serial.printf("received identifier: 0x%02X\r\n", rx_msg.identifier);
+    //     // rx_msg.data
+    //     // Serial.print("received data: ");
+    //     // for (int i = 0; i < rx_msg.data_length_code; i++) {
+    //     //     Serial.printf("0x%02X ", rx_msg.data[i]);
+    //     // }
+    //     // Serial.println();
+    //     delay(500);
+    // }
+    // else {
+    //     Serial.println("Waiting");
+    //     delay(1000);
+    // }
+
+    if(ESP32Can.readFrame(rxFrame, 10)) {
+        // Comment out if too many frames
+        Serial.printf("Received frame: %03X  \r\n", rxFrame.identifier);
+        Serial.println(rxFrame.data_length_code);
+        // if(rxFrame.identifier == 0x7E8) {   // Standard OBD2 frame responce ID
+        //     Serial.printf("Collant temp: %3d°C \r\n", rxFrame.data[3] - 40); // Convert to °C
+        // }
+    }
+
+}

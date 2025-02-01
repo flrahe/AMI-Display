@@ -12,23 +12,13 @@
  * ESP32-Arduino-CAN：https://github.com/miwagner/ESP32-Arduino-CAN
  */
 
-#include <CAN_config.h>
-#include <ESP32CAN.h>
 #include <M5Unified.h>
-#include <WiFi.h>
 #include <M5GFX.h>
-#include <RTClib.h>
-#include <Wire.h>
-#include <WiFiUdp.h>
+#include <WiFi.h>
+#include <SD.h>
 #include <NTPClient.h>
-#include <WiFiMulti.h>
-#include <time.h>
+#include <ESP32-TWAI-CAN.hpp>
 #include "secrets.h"
-
-
-#define CAN_SPEED CAN_SPEED_500KBPS
-#define CAN_TX_PIN GPIO_NUM_26
-#define CAN_RX_PIN GPIO_NUM_36
 
 #define MAX_POWER_DISP 6000.0
 #define MIN_POWER_DISP -10000.0
@@ -37,22 +27,23 @@
 
 
 
-#define RTC_IS_DS3231
-#ifdef RTC_IS_DS3231
-    #define RTC_SDA GPIO_NUM_17
-    #define RTC_SCL GPIO_NUM_16
-#endif
-
-
 #ifdef RTC_IS_DS3231
     RTC_DS3231 rtc;
     TwoWire myWire(1);
     #define RTCSYNC
     #define HAVERTC
+    #define NEET_RTC_LIB
+#endif
+
+#ifdef NEED_RTC_LIB
+    #include <RTClib.h>
 #endif
 
 
-
+#ifdef M5_RTC
+    #define HAVERTC
+    #define RTCSYNC
+#endif
 
 
 
@@ -91,9 +82,11 @@ M5Canvas canvas_error(&display);
 M5Canvas canvas_time(&display);
 M5Canvas canvas_power(&display);
 M5Canvas canvas_state(&display);
+M5Canvas canvas_SD_sym(&display);
+M5Canvas canvas_bus_led(&display);
 
-CAN_device_t CAN_cfg;             // CAN Config
-const int rx_queue_size = 10;     // Receive Queue size
+uint32_t msg_counter = 1;
+
 
 unsigned long previousMillis = 0; // will store last time a CAN Message was send
 const int interval = 1 * 200;   // interval at which send CAN Messages (milliseconds)
@@ -104,10 +97,18 @@ const int interval_WifiReconnect = 30 * 1000;   // interval at which send CAN Me
 uint8_t count = 0;
 
 #ifdef RTCSYNC
-unsigned long previousMillis_RTCsync = 0;
-const int interval_RTCsync = 60 * 1000; // interval at which send CAN Messages (milliseconds)
-bool was_NTPoffline = true;
+    unsigned long previousMillis_RTCsync = 0;
+    const int interval_RTCsync = 60 * 1000; // interval at which send CAN Messages (milliseconds)
+    bool was_NTPoffline = true;
 #endif
+
+size_t bufferPointer = 0;
+const size_t SDpacket = 4096*8;
+uint8_t canBuffer[SDpacket+100];
+File myfile;
+bool store=true;
+bool got_files=false;
+
 
 typedef struct
 {
@@ -144,11 +145,16 @@ car_data_struct car_data;
 
 void init_RTC()
 {
-#ifdef RTC_IS_DS3231
+#ifdef HAVERTC
     canvas_error.print("Initializing RTC... ");
     canvas_error.pushSprite(0, 0);
-    myWire.begin(RTC_SDA, RTC_SCL, 100000);
-    if (!rtc.begin(&myWire))
+    #ifdef NEED_RTC_LIB
+        myWire.begin(RTC_SDA, RTC_SCL, 100000);
+        if (!rtc.begin(&myWire))
+    #endif
+    #ifdef M5_RTC
+        if (!M5.Rtc.begin())
+    #endif
     {
         Serial.println("Couldn't find RTC");
         Serial.flush();
@@ -200,6 +206,48 @@ void init_wifi()
     }
 }
 
+#ifdef LOG_SD
+    void init_sd()
+    {
+        uint8_t counter=0;
+        canvas_error.setTextColor(GREEN);
+        canvas_error.print("Starting SD...");
+        canvas_error.pushSprite(0, 0);
+
+        while (false == SD.begin(SD_SPI_CS_PIN, SPI, 25000000))
+        {
+            delay(500);
+            counter++;
+            if (counter > 20) {
+                canvas_error.setTextColor(RED);
+                canvas_error.println(" NOK!");
+                canvas_error.pushSprite(0, 0);
+                canvas_error.setTextColor(GREEN);
+                return;
+            }
+        }
+        canvas_error.println(" OK.");
+
+        uint8_t cardType = SD.cardType();
+
+        if(cardType == CARD_NONE){
+            canvas_error.setTextColor(RED);
+            canvas_error.println("NO SD-Card found!");
+            canvas_error.pushSprite(0, 0);
+            canvas_error.setTextColor(GREEN);
+            return;
+        }
+        // DateTime dt = rtc.now();
+        // char filename[40];
+        // sprintf(filename, "/%4i-%02i-%02i_%02i-%02i.trc", dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute());
+        char filename[40];
+        sprintf(filename, "/test.trc");
+        myfile = SD.open(filename, FILE_WRITE);
+        myfile.println(";$FILEVERSION=1.1");
+        got_files = true;
+    }
+#endif
+
 void reconnect_wifi()
 {
     WiFi.disconnect();
@@ -216,8 +264,14 @@ void sync_rtc()
     }
 
     timeClient.update();                                  // Retrieve current epoch time from NTP server
-    unsigned long unix_epoch = timeClient.getEpochTime(); // Get epoch time
-    rtc.adjust(DateTime(unix_epoch));
+
+    #ifdef NEED_RTC_LIB
+        unsigned long unix_epoch = timeClient.getEpochTime(); // Get epoch time
+        rtc.adjust(DateTime(unix_epoch));
+    #else
+        time_t t = timeClient.getEpochTime(); // Get epoch time
+        M5.Rtc.setDateTime(gmtime(&t));
+    #endif
 #endif
 }
 
@@ -275,24 +329,24 @@ void decode_batt12_state(uint8_t data[8])
     car_data.batt.voltage12 = (data[1] << 8 | data[0]) / 100.0;
 }
 
-void parse_can(CAN_frame_t *rx_frame)
+void parse_can(CanFrame rx_frame)
 {
-    switch (rx_frame->MsgID)
+    switch (rx_frame.identifier)
     {
     case 0x713:
-        decode_display(rx_frame->data.u8);
+        decode_display(rx_frame.data);
         break;
     case 0x580:
-        decode_batt48_state(rx_frame->data.u8);
+        decode_batt48_state(rx_frame.data);
         break;
     case 0x581:
-        decode_odo(rx_frame->data.u8);
+        decode_odo(rx_frame.data);
         break;
     case 0x582:
-        decode_charge(rx_frame->data.u8);
+        decode_charge(rx_frame.data);
         break;
     case 0x593:
-        decode_batt12_state(rx_frame->data.u8);
+        decode_batt12_state(rx_frame.data);
         break;
     default:
         break;
@@ -308,29 +362,32 @@ void plot_state()
     {
         color = GREEN;
         text = "Ready";
+        canvas_state.setTextSize(1);
     }
     else {
         color = RED;
         text = "Waiting";
+        canvas_state.setTextSize(0.9);
     }
     canvas_state.fillRoundRect(0, 0, 100, 40, 5, color);
     canvas_state.setTextColor(BLACK);
     canvas_state.setCursor(5, 10);
-    canvas_state.setTextSize(1);
     canvas_state.print(text);
 
     if (car_data.display.hand_brake_active)
     {
         color = RED;
         text = "Break!";
+        canvas_state.setCursor(130, 10);
     }
     else {
         color = GREEN;
         text = "OK";
+        canvas_state.setCursor(137, 10);
     }
     canvas_state.fillRoundRect(110, 0, 100, 40, 5, color);
     canvas_state.setTextColor(BLACK);
-    canvas_state.setCursor(135, 10);
+    
     canvas_state.setTextSize(1);
     canvas_state.print(text);
     if ((car_data.display.gear == 'N') || (car_data.display.gear == 'D'))
@@ -343,7 +400,7 @@ void plot_state()
     canvas_state.fillRoundRect(220, 0, 100, 40, 5, color);
     canvas_state.setTextColor(BLACK);
     canvas_state.setCursor(255, 5);
-    canvas_state.setTextSize(2);
+    canvas_state.setTextSize(1.5);
     canvas_state.print(car_data.display.gear);
 
 }
@@ -400,16 +457,90 @@ void plot_power()
 
 }
 
-void setup()
+#ifdef LOG_SD
+    bool write_sym_state;
+    void write_sym(bool ok)
+    {
+        int color;
+        if (ok)
+        {
+            if (write_sym_state) {
+                color = GREEN;
+                write_sym_state = false;
+            }
+            else {
+                color = DARKGREEN;
+                write_sym_state = true;
+            }
+        }
+        else {
+            color = RED;
+        }
+        
+        canvas_SD_sym.fillRoundRect(0, 0, 14, 20, 3, color);
+        canvas_SD_sym.drawLine(11, 0, 11, 6, BLACK);
+        canvas_SD_sym.drawLine(11, 6, 14, 9, BLACK);
+        canvas_SD_sym.floodFill(12, 1, BLACK);
+        canvas_SD_sym.pushSprite(280,0);
+    }
+
+
+    uint32_t write_state=0;
+    void write_CAN_buffer()
+    {
+        size_t written = myfile.write(canBuffer, bufferPointer);
+        myfile.flush();
+        Serial.println("Written.");
+        write_sym(written == bufferPointer);
+        bufferPointer = 0;
+    }
+
+    void store_can(CanFrame rx_frame)
+    {
+        char data[100];
+        uint8_t i, j, str_len;
+
+        str_len = sprintf(data, "%8d) %10.1f Rx %04X  %1i ", msg_counter, micros()/1000.0, rx_frame.identifier, rx_frame.data_length_code);
+        for (i=0; i <str_len; i++) {
+            canBuffer[bufferPointer] = data[i];
+            bufferPointer++;
+        }
+        msg_counter++;
+        for (i=0; i<rx_frame.data_length_code; i++){
+            sprintf(data, " %02X", rx_frame.data[i]);
+            for (j=0; j <3; j++) {
+                canBuffer[bufferPointer] = data[j];
+                bufferPointer++;
+                // if (bufferPointer >= SDpacket) write_CAN_buffer();
+            }
+        }
+        canBuffer[bufferPointer] = '\n';
+        bufferPointer++;
+        if (bufferPointer >= SDpacket) {
+            write_CAN_buffer();
+            // str_len = sprintf(data, "%12d) %12d %04X %1i", msg_counter, millis(), rx_frame->MsgID, rx_frame->FIR.B.DLC);
+            // Serial.println(data);
+        }
+        if (write_state==200) {
+            canvas_bus_led.setColor(GREEN);
+            canvas_bus_led.fillCircle(10, 10, 4);
+            canvas_bus_led.pushSprite(300,0);
+        }
+        else if (write_state>=400)
+        {
+            write_state=0;
+            canvas_bus_led.clear();
+            // canvas_write_led.setColor(GREEN);
+            // canvas_write_led.fillCircle(10, 10, 7);
+            canvas_bus_led.pushSprite(300,0);
+        }
+        write_state++;
+
+    }
+#endif
+
+void init_gui()
 {
-    M5.begin();
-    Serial.begin(115200); // This high baud rate is recommended if you want to
-    // debug CAN data. These are coming at quite high rates.
-
-    Serial.println("Basic Demo - AMI-Display");
-
-    display.begin();
-
     canvas_time.setColorDepth(1); // mono color
     canvas_time.createSprite(150, 16);
     // canvas.setFont(&fonts::Font0);
@@ -417,40 +548,88 @@ void setup()
     canvas_time.setTextSize(1.0);
     canvas_time.setPaletteColor(1, GREEN);
 
+    canvas_power.setColorDepth(8); // mono color
+    canvas_power.setPaletteColor(1, GREEN);
+    canvas_power.setPaletteColor(2, RED);
+    canvas_power.createSprite(160, 153);
+    canvas_power.setFont(&fonts::FreeMonoBold18pt7b);
+    canvas_power.setTextScroll(false);
+
+    canvas_state.setColorDepth(8); // mono color
+    canvas_state.setPaletteColor(1, GREEN);
+    canvas_state.setPaletteColor(2, RED);
+    canvas_state.createSprite(320, 50);
+    canvas_state.setFont(&fonts::FreeMonoBold12pt7b);
+    canvas_state.setTextScroll(false);
+
+    canvas_bus_led.setColorDepth(8);
+    canvas_bus_led.setPaletteColor(1, GREEN);
+    canvas_bus_led.setPaletteColor(2, RED);
+    canvas_bus_led.createSprite(20, 20);
+    canvas_bus_led.setColor(RED);
+    canvas_bus_led.fillCircle(10, 10, 4);
+    canvas_bus_led.pushSprite(300,0);
+
+    #ifdef LOG_SD
+        canvas_SD_sym.setColorDepth(8);
+        canvas_SD_sym.setPaletteColor(1, GREEN);
+        canvas_SD_sym.setPaletteColor(2, DARKGREEN);
+        canvas_SD_sym.setPaletteColor(3, RED);
+        canvas_SD_sym.createSprite(14, 20);
+        write_sym(false);
+    #endif
+}
+void setup()
+{
+    auto cfg = M5.config();
+    M5.begin(cfg);
+
+    SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
+
+    Serial.begin(115200); // This high baud rate is recommended if you want to
+    // debug CAN data. These are coming at quite high rates.
+
+    Serial.println("Basic Demo - AMI-Display");
+
+    display.begin();
+
+
     canvas_error.setColorDepth(8); // mono color
     canvas_error.createSprite(display.width(), display.height());
-    // canvas.setFont(&fonts::Font0);
+    canvas_error.setFont(&fonts::Font0);
     canvas_error.setFont(&fonts::FreeMono9pt7b);
     canvas_error.setTextSize(1.0);
     canvas_error.setPaletteColor(1, GREEN);
-    canvas_error.setPaletteColor(1, RED);
+    canvas_error.setPaletteColor(2, RED);
     canvas_error.setTextScroll(true);
     canvas_error.setTextColor(GREEN);
     canvas_error.println("Basic Demo - AMI-Display");
     canvas_error.pushSprite(0,0);
 
-    canvas_power.createSprite(160, 153);
-    canvas_power.setFont(&fonts::FreeMonoBold18pt7b);
-    canvas_power.setTextScroll(false);
 
-    canvas_state.createSprite(320, 50);
-    canvas_state.setFont(&fonts::FreeMonoBold9pt7b);
-    canvas_state.setTextScroll(false);
+    init_wifi();    
 
-    init_wifi();
+    init_RTC();    
 
-    CAN_cfg.speed = CAN_SPEED;
-    CAN_cfg.tx_pin_id = CAN_TX_PIN;
-    CAN_cfg.rx_pin_id = CAN_RX_PIN;
-    CAN_cfg.rx_queue = xQueueCreate(rx_queue_size, sizeof(CAN_frame_t));
-    // Init CAN Module
+    #ifdef LOG_SD
+        init_sd();
+    #endif
+    
+
     canvas_error.print("Init CAN Module...");
     canvas_error.pushSprite(0, 0);
-    ESP32Can.CANInit();
-    canvas_error.println(" Ok?");
-    canvas_error.pushSprite(0, 0);
 
-    init_RTC();
+    ESP32Can.setPins(CAN_TX_PIN, CAN_RX_PIN);
+    ESP32Can.setRxQueueSize(20);
+	ESP32Can.setTxQueueSize(5);
+    ESP32Can.setSpeed(ESP32Can.convertSpeed(500));
+
+    if(ESP32Can.begin()) {
+        canvas_error.println("CAN bus started!");
+    } else {
+        canvas_error.println("CAN bus failed!");
+    }
+
     if (WiFi.status() == WL_CONNECTED)
     {
         /* Pushing that date/time to the RTC */
@@ -459,13 +638,21 @@ void setup()
     delay(1000);
     canvas_error.clear();
     canvas_error.pushSprite(0,0);
-
+    canvas_error.deleteSprite();
+    init_gui();
 }
 
 
 void loop()
 {
-    CAN_frame_t rx_frame;
+    // CAN_frame_t rx_frame;
+    CanFrame rxFrame;
+    #ifdef M5_RTC
+        auto dt = M5.Rtc.getDateTime();
+    #endif
+    #ifdef NEED_RTC_LIB
+        DateTime dt;
+    #endif
 
     unsigned long currentMillis = millis();
 
@@ -477,11 +664,17 @@ void loop()
     // }
 
     // Receive next CAN frame from queue
-    if (xQueueReceive(CAN_cfg.rx_queue, &rx_frame, 1 * portTICK_PERIOD_MS) == pdTRUE)
+    if (ESP32Can.readFrame(rxFrame, 10))
     {
-        if (rx_frame.FIR.B.RTR != CAN_RTR)
+        if (rxFrame.flags != TWAI_MSG_FLAG_RTR)
         {
-            parse_can(&rx_frame);
+            parse_can(rxFrame);
+            #ifdef LOG_SD
+                if (store && got_files) {
+                    store_can(rxFrame);
+                }
+            #endif
+            
         }
     }
     else
@@ -493,20 +686,31 @@ void loop()
     if (currentMillis - previousMillis >= interval)
     {
         previousMillis = currentMillis;
-        #ifdef HAVERTC
-        DateTime dt = rtc.now();
+        #ifdef NEED_RTC_LIB
+            DateTime dt = rtc.now();
+        #elif defined M5_RTC
+            dt = M5.Rtc.getDateTime();
         #else
-        unsigned long dt = millis()/1000;
+            unsigned long dt = millis()/1000;
         #endif
 
         canvas_time.clear();
         canvas_time.setCursor(0,0);
         #ifdef HAVERTC
-        canvas_time.printf("%02i", dt.hour());
-        canvas_time.print(":");
-        canvas_time.printf("%02i", dt.minute());
-        canvas_time.print(":");
-        canvas_time.printf("%02i", dt.second());
+            #ifdef M5_RTC
+                canvas_time.printf("%02i", dt.time.hours);
+                canvas_time.print(":");
+                canvas_time.printf("%02i", dt.time.minutes);
+                canvas_time.print(":");
+                canvas_time.printf("%02i", dt.time.seconds);
+
+            #else
+                canvas_time.printf("%02i", dt.hour());
+                canvas_time.print(":");
+                canvas_time.printf("%02i", dt.minute());
+                canvas_time.print(":");
+                canvas_time.printf("%02i", dt.second());
+            #endif
         #else
         canvas_time.printf("%02i", dt/(60*60));
         canvas_time.print(":");
@@ -523,22 +727,6 @@ void loop()
         plot_state();
         canvas_state.pushSprite(0, 200);
     }
-    // delay(1);
-
-    // if (currentMillis - previousMillis_RTCsync >= interval_RTCsync || currentMillis < previousMillis_RTCsync) {
-    //     previousMillis_RTCsync = currentMillis;
-    //     if (WiFi.status() == WL_CONNECTED) {
-    //         sync_rtc();
-    //         canvas.println("Synced RTC");
-    //         canvas.pushSprite(0, 0);
-    //     }
-    //     else
-    //     {
-    //         canvas.println("Was offline");
-    //         canvas.pushSprite(0, 0);
-    //         was_NTPoffline = true;
-    //     }
-    // }
 }
 
 void managing_loop()
