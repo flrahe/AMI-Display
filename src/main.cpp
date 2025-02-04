@@ -299,7 +299,7 @@ void init_sd(bool startup)
     char filename[40];
     sprintf(filename, "/%04i-%02i-%02i_%02i-%02i-%02i.trc",
             tm_now.tm_year+1900,
-            tm_now.tm_mon,
+            tm_now.tm_mon+1,
             tm_now.tm_mday,
             tm_now.tm_hour,
             tm_now.tm_min,
@@ -699,7 +699,6 @@ void setup()
 
     canvas_error.setColorDepth(8);
     canvas_error.createSprite(display.width(), display.height());
-    canvas_error.setFont(&fonts::Font0);
     canvas_error.setFont(&fonts::FreeMono9pt7b);
     canvas_error.setTextSize(1.0);
     canvas_error.setPaletteColor(1, GREEN);
