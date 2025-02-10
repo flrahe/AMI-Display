@@ -86,10 +86,10 @@ size_t mqttbufferPointer = 0;
 const size_t mqttPacket = 512;
 char mqttBuffer[mqttPacket];
 unsigned long lastMillisMQTTLoop = 0; // will store last time diplay was updates
-const int mqttLoopInterval = 1000;            // interval at which display will be updated
+const int mqttLoopInterval = 1000;    // interval at which display will be updated
 
-unsigned long previousMillisStore = 0; // will store last time diplay was updates
-const int storeInterval = 5*60*1000;            // interval at which display will be updated
+unsigned long previousMillisStore = 0;   // will store last time diplay was updates
+const int storeInterval = 5 * 60 * 1000; // interval at which display will be updated
 
 uint8_t brightness = 0;
 
@@ -253,16 +253,19 @@ void setup()
             time_t now;
             time(&now);
             if (car_data.long_state.lastSendTime + 3600 < now)
-            {   
-                uint8_t counter=0;
+            {
+                uint8_t counter = 0;
                 init_wifi(false);
                 MQTTclient.setServer(mqtt_server, 1883);
-                while ((WiFi.status() != WL_CONNECTED) & (counter < 25)) {
+                MQTTclient.setBufferSize(1024);
+                while ((WiFi.status() != WL_CONNECTED) & (counter < 25))
+                {
                     counter++;
                     delay(200);
                 }
                 delay(100);
-                if (WiFi.status() == WL_CONNECTED) {
+                if (WiFi.status() == WL_CONNECTED)
+                {
                     if (reconnectMQTT())
                     {
                         prepare_message();
@@ -272,7 +275,8 @@ void setup()
                         delay(200);
                         MQTTclient.loop();
                     }
-                    else {
+                    else
+                    {
                     }
                 }
                 time(&car_data.long_state.lastSendTime);
@@ -315,6 +319,7 @@ void setup()
 #endif
 
     MQTTclient.setServer(mqtt_server, 1883);
+    MQTTclient.setBufferSize(1024);
 
     delay(1000);
     canvas_error.clear();
@@ -392,11 +397,13 @@ void loop()
         {
 
             clear_car_data();
-            if (car_data.long_state.updated) {
+            if (car_data.long_state.updated)
+            {
                 writeState();
                 // car_data.long_state.updated = false;
             }
-            else {
+            else
+            {
                 Serial.println("No Update in state!");
             }
             Serial.println("closinfg SD");
@@ -426,11 +433,12 @@ void loop()
         canvas_state.pushSprite(0, 200);
     }
 
-    if (currentMillis - lastMQTTMessage > 15000 | lastMQTTMessage == 0) {
+    if (currentMillis - lastMQTTMessage > 15000 | lastMQTTMessage == 0)
+    {
         long now = millis();
         if (!MQTTclient.connected())
         {
-            if (now - lastReconnectAttempt > 5000 | lastReconnectAttempt==0)
+            if (now - lastReconnectAttempt > 5000 | lastReconnectAttempt == 0)
             {
                 lastReconnectAttempt = now;
                 // Attempt to reconnect
@@ -440,7 +448,8 @@ void loop()
                 }
             }
         }
-        else {
+        else
+        {
             lastReconnectAttempt = 0;
         }
 
@@ -454,28 +463,33 @@ void loop()
                 time(&car_data.long_state.lastSendTime);
             }
         }
-        else {
+        else
+        {
             lastMQTTMessage = now;
-            if (lastMQTTMessage > 10000) lastMQTTMessage -= 10000;
+            if (lastMQTTMessage > 10000)
+                lastMQTTMessage -= 10000;
         }
     }
 
-    if (currentMillis - lastMillisMQTTLoop >= mqttLoopInterval) {
+    if (currentMillis - lastMillisMQTTLoop >= mqttLoopInterval)
+    {
         lastMillisMQTTLoop = currentMillis;
         MQTTclient.loop();
     }
 
-    if (currentMillis - previousMillisStore >= storeInterval) {
+    if (currentMillis - previousMillisStore >= storeInterval)
+    {
         previousMillisStore = millis();
-        if (car_data.long_state.updated) {
+        if (car_data.long_state.updated)
+        {
             writeState();
             // car_data.long_state.updated = false;
         }
-        else {
+        else
+        {
             Serial.println("No Update of data...");
         }
     }
-
 }
 
 void init_RTC()
@@ -524,7 +538,8 @@ void init_wifi(bool have_display)
     WiFi.setSleep(true);
     if (WiFi.status() != WL_CONNECTED)
     {
-        if (have_display) {
+        if (have_display)
+        {
             canvas_error.setTextColor(GREEN);
             canvas_error.print("Init Wifi...");
             canvas_error.pushSprite(0, 0);
@@ -532,7 +547,8 @@ void init_wifi(bool have_display)
 
         WiFi.begin(ssid, password);
 
-        if (have_display) {
+        if (have_display)
+        {
             canvas_error.setTextColor(GREEN);
             canvas_error.println("   Backgrounding");
             canvas_error.pushSprite(0, 0);
@@ -716,45 +732,53 @@ void decode_batt48_state(uint8_t data[8], uint32_t currentmillis)
     float help_power = car_data.batt.voltage * car_data.batt.current;
     float peak_power = 0.3 * car_data.batt.power + 0.7 * help_power;
     car_data.batt.power = 0.6 * car_data.batt.power + 0.4 * help_power;
-    float akt_power = 0.5*help_power + 0.5* car_data.batt.last_power;
+    float akt_power = 0.5 * help_power + 0.5 * car_data.batt.last_power;
     if (car_data.batt.lastMsgTime > 0 &
         currentmillis > car_data.batt.lastMsgTime &
         (currentmillis - car_data.batt.lastMsgTime) < 500)
     {
         int32_t energy = (int32_t)(akt_power * (currentmillis - car_data.batt.lastMsgTime));
-        if (!car_data.state.isCharging) {
+        if (!car_data.state.isCharging)
+        {
             car_data.long_state.smallEnergyBattBal += -energy; // Energy negativ during discharge, but soting as positive value
-            if (car_data.long_state.smallEnergyBattBal > 3600000) {
+            if (car_data.long_state.smallEnergyBattBal > 3600000)
+            {
                 car_data.long_state.energyBattBal++;
-                car_data.long_state.smallEnergyBattBal -=3600000;
+                car_data.long_state.smallEnergyBattBal -= 3600000;
             }
-            else if (car_data.long_state.smallEnergyBattBal < -3600000) {
+            else if (car_data.long_state.smallEnergyBattBal < -3600000)
+            {
                 if (car_data.long_state.energyBattBal > 0)
                     car_data.long_state.energyBattBal--;
-                car_data.long_state.smallEnergyBattBal +=3600000;
+                car_data.long_state.smallEnergyBattBal += 3600000;
             }
 
-            if (energy > 0) {
-                car_data.long_state.smallEnergyRec += energy;
-                if (car_data.long_state.smallEnergyRec > 3600000) {
-                    car_data.long_state.energyRec++;
-                    car_data.long_state.smallEnergyRec -=3600000;
-                }
-            } else
+            if (energy > 0)
             {
-                car_data.long_state.smallEnergyBattOut += -energy;
-                if (car_data.long_state.smallEnergyBattOut > 3600000) {
-                    car_data.long_state.energyBattOut++;
-                    car_data.long_state.smallEnergyBattOut -=3600000;
+                car_data.long_state.smallEnergyRec += energy;
+                if (car_data.long_state.smallEnergyRec > 3600000)
+                {
+                    car_data.long_state.energyRec++;
+                    car_data.long_state.smallEnergyRec -= 3600000;
                 }
             }
-            
+            else
+            {
+                car_data.long_state.smallEnergyBattOut += -energy;
+                if (car_data.long_state.smallEnergyBattOut > 3600000)
+                {
+                    car_data.long_state.energyBattOut++;
+                    car_data.long_state.smallEnergyBattOut -= 3600000;
+                }
+            }
         }
-        else {
+        else
+        {
             car_data.long_state.smallEnergyChargeIn += energy; // Energy negativ during discharge, but soting as positive value
-            if (car_data.long_state.smallEnergyChargeIn > 3600000) {
+            if (car_data.long_state.smallEnergyChargeIn > 3600000)
+            {
                 car_data.long_state.energyChargeIn++;
-                car_data.long_state.smallEnergyChargeIn -=3600000;
+                car_data.long_state.smallEnergyChargeIn -= 3600000;
             }
         }
     }
@@ -885,7 +909,6 @@ void init_gui()
     canvas_energy.setTextSize(1.0);
     canvas_energy.setPaletteColor(1, GREEN);
     canvas_energy.setPaletteColor(2, RED);
-
 
     canvas_power.setColorDepth(8);
     canvas_power.setPaletteColor(1, GREEN);
@@ -1033,14 +1056,15 @@ void plot_power()
     canvas_power.printf("%+2.1f", car_data.batt.power_max / 1000.0);
 }
 
-void plotEnergy(){
+void plotEnergy()
+{
     canvas_energy.clear();
-    canvas_energy.setCursor(0,0);
+    canvas_energy.setCursor(0, 0);
     canvas_energy.setTextColor(GREEN);
     canvas_energy.println("Energy");
-    canvas_energy.printf("U%5i\n", (car_data.long_state.energyBattBal-car_data.long_state.energyBattBalTS));
-    canvas_energy.printf("R%5i\n", (car_data.long_state.energyRec-car_data.long_state.energyRecTS));
-    canvas_energy.printf("C%5i\n", (car_data.long_state.energyChargeIn-car_data.long_state.energyChargeInTS));
+    canvas_energy.printf("U%5i\n", (car_data.long_state.energyBattBal - car_data.long_state.energyBattBalTS));
+    canvas_energy.printf("R%5i\n", (car_data.long_state.energyRec - car_data.long_state.energyRecTS));
+    canvas_energy.printf("C%5i\n", (car_data.long_state.energyChargeIn - car_data.long_state.energyChargeInTS));
     canvas_energy.println("Temp");
     canvas_energy.printf("T1%3i'C\n", car_data.batt_temp.temp_1);
     canvas_energy.printf("T2%3i'C\n", car_data.batt_temp.temp_2);
@@ -1131,15 +1155,27 @@ void prepare_message()
     addToMessage("{", 1);
     str_len = sprintf(data, "\"soc\": %i, ", car_data.long_state.soc);
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"eBR\": %.1f, ", car_data.long_state.energyRec/1000.0);
+    str_len = sprintf(data, "\"soctr\": %i, ", (car_data.long_state.soc - car_data.long_state.socTS));
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"eBO\": %.1f, ", car_data.long_state.energyBattOut/1000.0);
+    str_len = sprintf(data, "\"eBR\": %.1f, ", car_data.long_state.energyRec / 1000.0);
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"eBB\": %.1f, ", car_data.long_state.energyBattBal/1000.0);
+    str_len = sprintf(data, "\"eBRtr\": %.2f, ", (car_data.long_state.energyRec - car_data.long_state.energyRecTS) / 1000.0);
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"eCI\": %.1f, ", car_data.long_state.energyChargeIn/1000.0);
+    str_len = sprintf(data, "\"eBO\": %.1f, ", car_data.long_state.energyBattOut / 1000.0);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"eBOtr\": %.2f, ", (car_data.long_state.energyBattOut - car_data.long_state.energyBattOutTS) / 1000.0);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"eBB\": %.1f, ", car_data.long_state.energyBattBal / 1000.0);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"eBBtr\": %.2f, ", (car_data.long_state.energyBattBal - car_data.long_state.energyBattBalTS) / 1000.0);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"eCI\": %.1f, ", car_data.long_state.energyChargeIn / 1000.0);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"eCItr\": %.2f, ", (car_data.long_state.energyChargeIn - car_data.long_state.energyChargeInTS) / 1000.0);
     addToMessage(data, str_len);
     str_len = sprintf(data, "\"odo\": %.1f,", car_data.long_state.odometer);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"odotr\": %.1f,", (car_data.long_state.odometer - car_data.long_state.odometerTS));
     addToMessage(data, str_len);
     str_len = sprintf(data, "\"rng\": %i,", car_data.long_state.range);
     addToMessage(data, str_len);
@@ -1170,6 +1206,7 @@ void prepare_message()
     addToMessage("}", 1);
     mqttBuffer[mqttbufferPointer] = (char)0;
     mqttbufferPointer++;
+    Serial.println(mqttBuffer);
 }
 
 #ifdef LOG_SD
@@ -1325,15 +1362,18 @@ void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
         file = root.openNextFile();
     }
 }
-void readState() {
+void readState()
+{
     JsonDocument doc;
-    if (SPIFFS.exists("/state.json")) {
+    if (SPIFFS.exists("/state.json"))
+    {
         File file = SPIFFS.open("/state.json", "r");
         DeserializationError error = deserializeJson(doc, file);
         file.close();
         if (error)
             Serial.println(F("Failed to read file, using default configuration"));
-        else {
+        else
+        {
             car_data.long_state.soc = doc["soc"] | 0;
             car_data.long_state.odometer = doc["odo"] | 0.0;
             car_data.long_state.range = doc["range"] | 0;
@@ -1351,6 +1391,8 @@ void readState() {
             car_data.long_state.energyBattOutTS = car_data.long_state.energyBattOut;
             car_data.long_state.energyBattBalTS = car_data.long_state.energyBattBal;
             car_data.long_state.energyRecTS = car_data.long_state.energyRec;
+            car_data.long_state.socTS = car_data.long_state.soc;
+            car_data.long_state.odometerTS = car_data.long_state.odometer;
             car_data.long_state.updated = false;
         }
     }
@@ -1361,7 +1403,8 @@ void readState() {
     car_data.long_state.updated = false;
 }
 
-void writeState() {
+void writeState()
+{
     time(&car_data.long_state.lastWrtTime);
     prepareState();
     Serial.println("Write State");
@@ -1373,7 +1416,6 @@ void writeState() {
     //     file.write(mqttBuffer[mqttbufferPointer]);
     // }
     // file.close();
-    
 }
 
 void prepareState()
@@ -1389,11 +1431,11 @@ void prepareState()
     addToMessage(data, str_len);
     str_len = sprintf(data, "\"range\": %i,", car_data.long_state.range);
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"smEChrgIn\": %i,", (uint8_t) round(car_data.long_state.smallEnergyChargeIn/1000.0));
+    str_len = sprintf(data, "\"smEChrgIn\": %i,", (uint8_t)round(car_data.long_state.smallEnergyChargeIn / 1000.0));
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"smEBatOut\": %i,", (uint8_t) round(car_data.long_state.smallEnergyBattOut/1000.0));
+    str_len = sprintf(data, "\"smEBatOut\": %i,", (uint8_t)round(car_data.long_state.smallEnergyBattOut / 1000.0));
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"smERec\": %i,", (uint8_t) round(car_data.long_state.smallEnergyRec/1000.0));
+    str_len = sprintf(data, "\"smERec\": %i,", (uint8_t)round(car_data.long_state.smallEnergyRec / 1000.0));
     addToMessage(data, str_len);
     str_len = sprintf(data, "\"eChrgIn\": %i,", car_data.long_state.energyChargeIn);
     addToMessage(data, str_len);
