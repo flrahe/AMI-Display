@@ -159,6 +159,7 @@ struct car_data_struct
         uint32_t energyRec;
         uint32_t energyChargeInTS;
         uint32_t energyBattOutTS;
+        uint32_t energyBattBalTS;
         uint32_t energyRecTS;
         time_t lastWrtTime;
         time_t lastSendTime;
@@ -1037,7 +1038,7 @@ void plotEnergy(){
     canvas_energy.setCursor(0,0);
     canvas_energy.setTextColor(GREEN);
     canvas_energy.println("Energy");
-    canvas_energy.printf("U%5i\n", (car_data.long_state.energyBattOut-car_data.long_state.energyBattOutTS));
+    canvas_energy.printf("U%5i\n", (car_data.long_state.energyBattBal-car_data.long_state.energyBattBalTS));
     canvas_energy.printf("R%5i\n", (car_data.long_state.energyRec-car_data.long_state.energyRecTS));
     canvas_energy.printf("C%5i\n", (car_data.long_state.energyChargeIn-car_data.long_state.energyChargeInTS));
     canvas_energy.println("Temp");
@@ -1348,6 +1349,7 @@ void readState() {
 
             car_data.long_state.energyChargeInTS = car_data.long_state.energyChargeIn;
             car_data.long_state.energyBattOutTS = car_data.long_state.energyBattOut;
+            car_data.long_state.energyBattBalTS = car_data.long_state.energyBattBal;
             car_data.long_state.energyRecTS = car_data.long_state.energyRec;
             car_data.long_state.updated = false;
         }
