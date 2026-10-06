@@ -29,6 +29,8 @@
 #define MAX_POWER_DISP 6000.0
 #define MIN_POWER_DISP -10000.0
 #define WIFI_WAIT 3
+#define RANGE_STEPS 21          // range table points: soc 0, 5, ... 100 %
+#define RANGE_LEARN_RATE 0.05f  // share of the error corrected per sample
 
 // choose your time zone from this list
 // https://github.com/nayarsystems/posix_tz_db/blob/master/zones.csv
@@ -87,6 +89,10 @@ const size_t mqttPacket = 1024;
 char mqttBuffer[mqttPacket];
 unsigned long lastMillisMQTTLoop = 0; // will store last time diplay was updates
 const int mqttLoopInterval = 1000;    // interval at which display will be updated
+// Sent before sleeping
+const char *mqttOffMessage = "{\"state\": \"off\", \"chrgn\": 0, \"rdy\": 0, \"cur\": 0.00, \"pwr\": 0, \"spd\": 0, \"gear\": \"X\"}";
+
+const uint32_t signalTimeout = 2000; // ms without frame until live values are reset
 
 unsigned long previousMillisStore = 0;   // will store last time diplay was updates
 const int storeInterval = 5 * 60 * 1000; // interval at which display will be updated
@@ -152,6 +158,7 @@ struct car_data_struct
         uint8_t range;
         uint8_t rangeTS;
         uint8_t rangeTCS;
+        float rangeTable[RANGE_STEPS]; // range per 5 % soc, learned from the car's range
         int32_t smallEnergyChargeIn;
         int32_t smallEnergyBattOut;
         int32_t smallEnergyBattBal;
@@ -185,12 +192,6 @@ struct car_data_struct
 
 car_data_struct car_data;
 
-struct boot_state_struct
-{
-    time_t lastSendTime;
-    bool updated;
-};
-boot_state_struct boot_state;
 
 int charge_counter = 0;
 bool busOk = false;
@@ -212,8 +213,10 @@ void decode_batt_temp(uint8_t data[8], uint32_t currentmillis);
 void init_car_data(void);
 void clear_car_data(void);
 void check_for_charging(void);
+void check_signal_timeouts(void);
 
 void plot_power(void);
+void printPowerPeak(float kw);
 void plotEnergy(void);
 void plot_state(void);
 void plotBusOk(void);
@@ -230,6 +233,9 @@ void listDir(fs::FS &fs, const char *dirname, uint8_t levels);
 void writeFile(fs::FS &fs, const char *path, const char *message);
 
 boolean reconnectMQTT(void);
+void publish_evcc(void);
+void update_range(void);
+void init_range_table(void);
 void addToMessage(const char *data, size_t len);
 void prepare_message();
 
@@ -237,11 +243,11 @@ void readState();
 void writeState();
 void prepareState();
 
-void readBootState();
-void writeBootState();
-void prepareBootState();
 
 void writeCargeStat();
+
+bool shouldSleep();
+void goToSleep();
 
 void setup()
 {
@@ -267,50 +273,10 @@ void setup()
         delay(2000);
         ESP.restart();
     }
-    readBootState();
     bool key_state = M5.BtnPWR.getState();
-    if (!M5.Power.isCharging() & (M5.Power.getBatteryLevel() < 99) & (M5.Power.getBatteryLevel() != -1) & (key_state == 0))
+    if (shouldSleep() & (key_state == 0) & !busOk)
     {
-        if (!busOk)
-        {
-            time_t now;
-            time(&now);
-            if (boot_state.lastSendTime + 3600 < now)
-            {
-                time(&boot_state.lastSendTime);
-                writeBootState();
-
-                uint8_t counter = 0;
-                init_wifi(false);
-                init_sd(true);
-                MQTTclient.setServer(mqtt_server, 1883);
-                MQTTclient.setBufferSize(1024);
-                while ((WiFi.status() != WL_CONNECTED) & (counter < 25))
-                {
-                    counter++;
-                    delay(200);
-                }
-                delay(100);
-                if (WiFi.status() == WL_CONNECTED)
-                {
-                    if (reconnectMQTT())
-                    {
-                        readState();
-                        prepare_message();
-                        MQTTclient.publish("ami/state", mqttBuffer);
-                        MQTTclient.publish("ami/state", "Going to sleep.");
-                        MQTTclient.loop();
-                        delay(200);
-                        MQTTclient.loop();
-                    }
-                    else
-                    {
-                    }
-                }
-                delay(10);
-            }
-            M5.Power.timerSleep(15);
-        }
+        goToSleep();
     }
     display.begin();
     display.powerSaveOff();
@@ -340,10 +306,12 @@ void setup()
 
     init_wifi(true);
 
+    init_range_table(); // default, replaced by the stored table if there is one
 #ifdef LOG_SD
     init_sd(true);
     initLogFile();
     readState();
+    update_range(); // stored range may be outdated, e.g. after charging
 #endif
 
     MQTTclient.setServer(mqtt_server, 1883);
@@ -360,6 +328,7 @@ void setup()
 
 long lastReconnectAttempt = 0;
 long lastMQTTMessage = 0;
+int8_t evccSentCharging = -1; // charging state last sent to evcc, -1 = not sent yet
 uint16_t fail_counter = 0;
 unsigned long last_can = 0;
 
@@ -399,6 +368,7 @@ void loop()
             }
         }
     }
+    check_signal_timeouts();
 
     if (currentMillis - previousMillisDisplay >= interval)
     {
@@ -436,14 +406,6 @@ void loop()
             {
                 Serial.println("No Update in state!");
             }
-            if (boot_state.updated)
-            {
-                writeBootState();
-            }
-            else
-            {
-                Serial.println("No Update in state!");
-            }
 
             Serial.println("closinfg SD");
             closeSD();
@@ -452,9 +414,9 @@ void loop()
 
         if ((!busOk) & (currentMillis > (last_can + 120 * 1000)))
         {
-            if (!M5.Power.isCharging() & (M5.Power.getBatteryLevel() < 99) & (M5.Power.getBatteryLevel() != -1))
+            if (shouldSleep())
             {
-                M5.Power.timerSleep(15);
+                goToSleep();
             }
         }
 
@@ -473,7 +435,9 @@ void loop()
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-        if (currentMillis - lastMQTTMessage > 15000 | lastMQTTMessage == 0)
+        // a charging state change is sent immediately, not with the next interval
+        bool chargingChanged = car_data.state.isCharging != evccSentCharging;
+        if (currentMillis - lastMQTTMessage > 15000 | lastMQTTMessage == 0 | chargingChanged)
         {
             long now = millis();
             if (!MQTTclient.connected())
@@ -495,13 +459,12 @@ void loop()
 
             if (lastReconnectAttempt == 0)
             {
-                if (now - lastMQTTMessage > 15000 | lastMQTTMessage == 0)
+                if (now - lastMQTTMessage > 15000 | lastMQTTMessage == 0 | chargingChanged)
                 {
                     lastMQTTMessage = now;
                     prepare_message();
                     MQTTclient.publish("ami/state", mqttBuffer);
-                    time(&boot_state.lastSendTime);
-                    boot_state.updated = true;
+                    publish_evcc();
                 }
             }
             else
@@ -543,7 +506,7 @@ void init_RTC()
     if (!rtc.begin(&myWire))
 #endif
 #ifdef M5_RTC
-        if (!M5.Rtc.begin())
+        if (!M5.Rtc.isEnabled()) // already started by M5.begin()
 #endif
         {
             Serial.println("Couldn't find RTC");
@@ -595,6 +558,37 @@ void init_wifi(bool have_display)
             canvas_error.pushSprite(0, 0);
         }
     }
+}
+
+// Sleep only when running from battery. With USB/external power present the
+// battery readings are unreliable (floating without battery), so never sleep.
+bool shouldSleep()
+{
+    if (M5.Power.getType() == m5::Power_Class::pmic_axp2101)
+    {
+        // Use the PMIC status bits; the VBUS ADC is not reliably enabled
+        if (M5.Power.Axp2101.isVBUS() | !M5.Power.Axp2101.getBatState())
+            return false;
+    }
+    else if (M5.Power.getVBUSVoltage() > 4000)
+        return false;
+    int batteryLevel = M5.Power.getBatteryLevel();
+    return !M5.Power.isCharging() & (batteryLevel >= 0); // & (batteryLevel < 101);
+}
+
+// Power off via PMIC. The AXP2101 powers on again when USB/VBUS is connected
+// or by power button.
+void goToSleep()
+{
+    if (MQTTclient.connected())
+    {
+        MQTTclient.publish("ami/state", mqttOffMessage);
+        MQTTclient.publish("ami/evcc/status", "A", true);
+        MQTTclient.loop();
+        delay(200);
+        MQTTclient.disconnect();
+    }
+    M5.Power.powerOff();
 }
 
 bool setup_and_check_can()
@@ -758,17 +752,55 @@ void parse_can(CanFrame rx_frame, uint32_t currentmillis)
     }
 }
 
+// Default range table: linear, 70 km at 100 %
+void init_range_table()
+{
+    for (uint8_t i = 0; i < RANGE_STEPS; i++)
+        car_data.long_state.rangeTable[i] = i * 5 * 0.70f;
+}
+
+// The car sends range 0 while charging / switching off (only valid with empty
+// battery). Then the range is interpolated from the range table.
+// The table is learned once per soc change: the first valid range after the
+// change corrects the two neighbouring points, weighted by their distance.
+void update_range()
+{
+    static uint8_t learnedSoc = 255;
+    uint8_t soc = min(car_data.long_state.soc, (uint8_t)100);
+    float *table = car_data.long_state.rangeTable;
+    uint8_t i = min(soc / 5, RANGE_STEPS - 2);
+    float w = (soc - i * 5) / 5.0f; // weight of point i + 1
+    float estimate = (1 - w) * table[i] + w * table[i + 1];
+
+    if (car_data.display.range > 0)
+    {
+        car_data.long_state.range = car_data.display.range;
+        if (soc != learnedSoc)
+        {
+            learnedSoc = soc;
+            float error = car_data.display.range - estimate;
+            table[i] += RANGE_LEARN_RATE * (1 - w) * error;
+            table[i + 1] += RANGE_LEARN_RATE * w * error;
+        }
+    }
+    else if (soc < 5)
+        car_data.long_state.range = 0;
+    else
+        car_data.long_state.range = (uint8_t)constrain(roundf(estimate), 0.0f, 127.0f);
+}
+
 void decode_display(uint8_t data[8], uint32_t currentmillis)
 {
     car_data.display.gear = gears[(uint8_t)((data[0] >> 7) | ((data[1] & 1) << 1))];
 
     car_data.display.range = (uint8_t)(data[0] & 127);
-    car_data.long_state.range = car_data.display.range;
+    update_range();
 
     car_data.display.ready = (bool)(data[2] & 4);
 
     car_data.display.hand_brake_active = (bool)(data[3] & 32);
 
+    car_data.display.lastMsgTime = currentmillis;
     car_data.display.ok = true;
 }
 
@@ -845,6 +877,7 @@ void decode_batt48_state(uint8_t data[8], uint32_t currentmillis)
 
     car_data.batt.soc = (uint8_t)data[5];
     car_data.long_state.soc = car_data.batt.soc;
+    update_range();
 
     car_data.batt.lastMsgTime = currentmillis;
     car_data.batt.last_power = help_power;
@@ -859,6 +892,7 @@ void decode_odo(uint8_t data[8], uint32_t currentmillis)
 
     car_data.odo.speed = (uint8_t)data[7];
 
+    car_data.odo.lastMsgTime = currentmillis;
     car_data.odo.ok = true;
     car_data.long_state.updated = true;
 }
@@ -873,6 +907,7 @@ void decode_batt_temp(uint8_t data[8], uint32_t currentmillis)
 {
     car_data.batt_temp.temp_1 = (int8_t)data[0];
     car_data.batt_temp.temp_2 = (int8_t)data[3];
+    car_data.batt_temp.lastMsgTime = currentmillis;
     car_data.batt_temp.ok = true;
 }
 
@@ -881,9 +916,9 @@ void check_for_charging()
     if (
         car_data.batt.ok &
         (car_data.batt.current > 0) &
-        car_data.display.ok &
+        (car_data.display.lastMsgTime > 0) & // seen once, may be timed out while charging
         (car_data.display.hand_brake_active) &
-        car_data.odo.ok &
+        (car_data.odo.lastMsgTime > 0) &
         (car_data.odo.speed) == 0)
     {
         charge_counter++;
@@ -908,6 +943,37 @@ void check_for_charging()
         {
             car_data.state.isCharging = false;
         }
+    }
+}
+
+// Reset live values of signals without frames for signalTimeout.
+// Long lasting values (soc, odometer, range, temps) keep their last state.
+void check_signal_timeouts()
+{
+    uint32_t now = millis();
+    if (car_data.batt.ok & (now - car_data.batt.lastMsgTime > signalTimeout))
+    {
+        car_data.batt.ok = false;
+        car_data.batt.current = 0.0;
+        car_data.batt.power = 0.0;
+        car_data.batt.last_power = 0.0;
+        car_data.state.isCharging = false;
+        charge_counter = 0;
+    }
+    if (car_data.display.ok & (now - car_data.display.lastMsgTime > signalTimeout))
+    {
+        car_data.display.ok = false;
+        car_data.display.ready = false;
+        car_data.display.gear = 'X';
+    }
+    if (car_data.odo.ok & (now - car_data.odo.lastMsgTime > signalTimeout))
+    {
+        car_data.odo.ok = false;
+        car_data.odo.speed = 0;
+    }
+    if (car_data.batt_temp.ok & (now - car_data.batt_temp.lastMsgTime > signalTimeout))
+    {
+        car_data.batt_temp.ok = false;
     }
 }
 
@@ -941,9 +1007,11 @@ void clear_car_data()
     car_data.display.gear = 'X';
     car_data.display.hand_brake_active = true;
     car_data.display.range = 0;
+    update_range(); // no range from the car: estimate it from soc
     car_data.display.ready = false;
     car_data.display.ok = false;
     car_data.state.isCharging = false;
+    charge_counter = 0;
 }
 
 void init_gui()
@@ -1089,7 +1157,11 @@ void plot_power()
     canvas_power.setCursor(30, 60);
     canvas_power.setTextSize(1.0);
 
-    canvas_power.printf("%2.1f", abs(car_data.batt.power) / 1000.0);
+    float power_kw = abs(car_data.batt.power) / 1000.0;
+    if (power_kw >= 9.95) // decimals only below 10 kW
+        canvas_power.printf("%.0f", power_kw);
+    else
+        canvas_power.printf("%2.1f", power_kw);
     int x = canvas_power.getCursorX();
     int y = canvas_power.getCursorY();
     canvas_power.setCursor(x + 6, y + 6);
@@ -1099,12 +1171,21 @@ void plot_power()
     canvas_power.setTextColor(RED);
     canvas_power.setCursor(120, 0);
     canvas_power.setTextSize(0.5);
-    canvas_power.printf("%+2.1f", car_data.batt.power_min / 1000.0);
+    printPowerPeak(car_data.batt.power_min / 1000.0);
 
     canvas_power.setTextColor(GREEN);
     canvas_power.setCursor(120, 140);
     canvas_power.setTextSize(0.5);
-    canvas_power.printf("%+2.1f", car_data.batt.power_max / 1000.0);
+    printPowerPeak(car_data.batt.power_max / 1000.0);
+}
+
+// Max. 4 characters: decimals only below 10 kW (e.g. "+9.9", "-10")
+void printPowerPeak(float kw)
+{
+    if (abs(kw) >= 9.95)
+        canvas_power.printf("%+.0f", kw);
+    else
+        canvas_power.printf("%+2.1f", kw);
 }
 
 void plotEnergy()
@@ -1178,6 +1259,32 @@ void plotWifi()
     }
 }
 
+// Retained single values for evcc: the last state survives while the car is
+// parked and the M5Stack is off. Only valid values are published, so a fresh
+// boot without state file does not overwrite them with 0.
+void publish_evcc()
+{
+    char data[16];
+    if (car_data.long_state.soc > 0)
+    {
+        sprintf(data, "%i", car_data.long_state.soc);
+        MQTTclient.publish("ami/evcc/soc", data, true);
+    }
+    if (car_data.long_state.range > 0)
+    {
+        sprintf(data, "%i", car_data.long_state.range);
+        MQTTclient.publish("ami/evcc/range", data, true);
+    }
+    if (car_data.long_state.odometer > 0)
+    {
+        sprintf(data, "%.1f", car_data.long_state.odometer);
+        MQTTclient.publish("ami/evcc/odometer", data, true);
+    }
+    // evcc charge status: C = charging, A = not charging (plugged in is unknown)
+    if (MQTTclient.publish("ami/evcc/status", car_data.state.isCharging ? "C" : "A", true))
+        evccSentCharging = car_data.state.isCharging;
+}
+
 boolean reconnectMQTT()
 {
     if (MQTTclient.connect("ami_mqtt", mqtt_username, mqtt_password))
@@ -1228,22 +1335,35 @@ void prepare_message()
     addToMessage(data, str_len);
     str_len = sprintf(data, "\"odotr\": %.1f,", (car_data.long_state.odometer - car_data.long_state.odometerTS));
     addToMessage(data, str_len);
-    str_len = sprintf(data, "\"rng\": %i,", car_data.long_state.range);
+    if ((car_data.long_state.range > 0) | (car_data.long_state.soc < 5)) // else no valid range known yet
+    {
+        str_len = sprintf(data, "\"rng\": %i,", car_data.long_state.range);
+        addToMessage(data, str_len);
+    }
+
+    // Live values: always sent, reset to 0 / X by signal timeouts
+    str_len = sprintf(data, "\"state\": \"%s\",", busOk ? "running" : "stopped");
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"cur\": %.2f, ", car_data.batt.current);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"pwr\": %.0f,", car_data.batt.power);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"chrgn\": %i,", car_data.state.isCharging);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"rdy\": %i,", car_data.display.ready);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"gear\": \"%c\",", car_data.display.gear);
+    addToMessage(data, str_len);
+    str_len = sprintf(data, "\"spd\": %i,", car_data.odo.speed);
     addToMessage(data, str_len);
 
     if (car_data.batt.ok)
     {
-        str_len = sprintf(data, "\"cur\": %.2f, ", car_data.batt.current);
-        addToMessage(data, str_len);
         str_len = sprintf(data, "\"volt\": %.2f,", car_data.batt.voltage);
-        addToMessage(data, str_len);
-        str_len = sprintf(data, "\"pwr\": %.0f,", car_data.batt.power);
         addToMessage(data, str_len);
         str_len = sprintf(data, "\"pwrmax\": %.0f,", car_data.batt.power_max);
         addToMessage(data, str_len);
         str_len = sprintf(data, "\"pwrmin\": %.0f,", car_data.batt.power_min);
-        addToMessage(data, str_len);
-        str_len = sprintf(data, "\"chrgn\": %i,", car_data.state.isCharging);
         addToMessage(data, str_len);
     }
 
@@ -1424,30 +1544,6 @@ void resetTrip() {
     car_data.long_state.odometerTS = car_data.long_state.odometer;
 }
 
-void readBootState()
-{
-    JsonDocument doc;
-    if (SPIFFS.exists("/state.json"))
-    {
-        File file = SPIFFS.open("/state.json", "r");
-        DeserializationError error = deserializeJson(doc, file);
-        file.close();
-        if (error)
-            Serial.println(F("Failed to read file, using default configuration"));
-        else
-        {
-            boot_state.lastSendTime = (time_t)doc["lstSndT"] | (time_t)0;
-
-            resetTrip();
-            boot_state.updated = false;
-        }
-    }
-    else
-    {
-        Serial.println("Could not read data!");
-    }
-    boot_state.updated = false;
-}
 
 
 void readState()
@@ -1465,6 +1561,10 @@ void readState()
             car_data.long_state.soc = doc["soc"] | 0;
             car_data.long_state.odometer = doc["odo"] | 0.0;
             car_data.long_state.range = doc["range"] | 0;
+            JsonArray table = doc["rngtbl"];
+            if (table.size() == RANGE_STEPS)
+                for (uint8_t i = 0; i < RANGE_STEPS; i++)
+                    car_data.long_state.rangeTable[i] = table[i];
             car_data.long_state.smallEnergyChargeIn = doc["smEChrgIn"] | 0;
             car_data.long_state.smallEnergyChargeIn*=1000;
             car_data.long_state.smallEnergyBattOut = doc["smEBatOut"] | 0;
@@ -1505,29 +1605,7 @@ void writeState()
     writeFile(SD, "/state.json", mqttBuffer);
 }
 
-void writeBootState()
-{
-    time(&car_data.long_state.lastWrtTime);
-    prepareBootState();
-    Serial.println("Write State");
-    Serial.println(mqttBuffer);
-    boot_state.updated = false;
-    writeFile(SPIFFS, "/state.json", mqttBuffer);
-}
 
-void prepareBootState()
-{
-    mqttbufferPointer = 0;
-    char data[100];
-    uint8_t i, j, str_len;
-    addToMessage("{", 1);
-    str_len = sprintf(data, "\"lstSndT\": %i,", boot_state.lastSendTime);
-    addToMessage(data, str_len);
-    mqttbufferPointer--;
-    addToMessage("}", 1);
-    mqttBuffer[mqttbufferPointer] = (char)0;
-    mqttbufferPointer++;
-}
 
 
 
@@ -1544,6 +1622,14 @@ void prepareState()
     addToMessage(data, str_len);
     str_len = sprintf(data, "\"range\": %i,", car_data.long_state.range);
     addToMessage(data, str_len);
+    addToMessage("\"rngtbl\": [", 11);
+    for (i = 0; i < RANGE_STEPS; i++)
+    {
+        str_len = sprintf(data, "%.1f,", car_data.long_state.rangeTable[i]);
+        addToMessage(data, str_len);
+    }
+    mqttbufferPointer--; // remove last comma
+    addToMessage("],", 2);
     str_len = sprintf(data, "\"smEChrgIn\": %i,", (car_data.long_state.smallEnergyChargeIn / 1000));
     addToMessage(data, str_len);
     str_len = sprintf(data, "\"smEBatOut\": %i,", (car_data.long_state.smallEnergyBattOut / 1000));

@@ -49,10 +49,10 @@ There are three profiles defined in [platformio.ini](platformio.ini) which conta
 Unfortunetely I can only test on Core and CoreS3.
 
 ### secrets.h
-You have to create a secrets.h file in te src directory. An example is put in [secrets_example.h](./src/secrets_example.h). Here you have to put your wifi credentials. The secrets.h is in the gitignore not to accidentially upload it to github.
+You have to create a secrets.h file in te src directory. An example is put in [secrets_example.h](./src/secrets_example.h). Here you have to put your wifi and MQTT credentials. The secrets.h is in the gitignore not to accidentially upload it to github.
 
 ## Wiring and Hardware
-Actually it is based on an m5Stack core (tested on m5Stack grey), which I had laying around. Since I'm using M5Unified, M5GFX and not using any of the additional hardware of the m5stack grey, it should work on other m5Stacks. Also no sleep mode is used so far. Unfortunately it is seems to be broken on eraly m5. Mine takes 10mA in sleep mode, which is way too high for longer use. It makes even no difference in deep sleep or light sleep.
+Actually it is based on an m5Stack core (tested on m5Stack grey), which I had laying around. Since I'm using M5Unified, M5GFX and not using any of the additional hardware of the m5stack grey, it should work on other m5Stacks. For the actual sleep behaviour see [Power and sleep](#power-and-sleep). Unfortunately it is seems to be broken on eraly m5. Mine takes 10mA in sleep mode, which is way too high for longer use. It makes even no difference in deep sleep or light sleep.
 
 ### Addidiona hardware needed
 #### RTC
@@ -77,6 +77,80 @@ The wiring of the can side is straightforward:
 * H -> CAN High at ODB2 (pin 6)
 * L -> CAN Low at  ODB2 (pin 14)
 * G -> Signal Ground at ODB" (pin 5).
+
+## MQTT
+When WiFi is available, the data is published to the MQTT broker from [secrets.h](./src/secrets_example.h).
+
+### ami/state
+A JSON message every 15 s and immediately when the charging state changes, e.g.:
+
+```json
+{"soc": 85, "soctr": 0, "eBR": 5.6, "eBRtr": 0.00, "eBO": 71.4, "eBOtr": 0.00, "eBB": 66.0, "eBBtr": 0.00,
+ "eCI": 62.3, "eCItr": 0.00, "odo": 4696.2, "odotr": 0.0, "rng": 58, "state": "stopped",
+ "cur": 0.00, "pwr": 0, "chrgn": 0, "rdy": 0, "gear": "X", "spd": 0, "m5soc": 100, "rssi": -41, "wfiok": 1}
+```
+
+* `soc`, `odo`, `rng` and the energy counters (`eBR`, `eBO`, `eBB`, `eCI`, in kWh) keep their last value while the car is off. The `...tr` values are the trip values.
+* `rng` is left out as long as no valid range is known.
+* The live values `state` (`running`/`stopped`), `cur`, `pwr`, `chrgn`, `rdy`, `gear` and `spd` are always sent. They are reset to 0 / `X` when the related CAN frames are missing for 2 s.
+* `volt`, `pwrmax` and `pwrmin` are only sent while battery frames are received.
+* Before powering off (battery operation only) `{"state": "off", ...}` is sent.
+
+### ami/evcc/*
+Single retained values, mainly for [evcc](https://evcc.io), but usable by any other system:
+
+| Topic | Value |
+|---|---|
+| `ami/evcc/soc` | state of charge in % |
+| `ami/evcc/range` | remaining range in km |
+| `ami/evcc/odometer` | odometer in km |
+| `ami/evcc/status` | `C` = charging, `A` = not charging |
+
+Because they are retained, the last values are still available while the car is parked and the M5Stack is off. Values are only published if they are valid (> 0), so a start without state file does not overwrite them. A change of the charging state is sent immediately.
+
+The car can only tell charging / not charging, not whether the cable is plugged in. Therefore `A` is reported when not charging.
+
+## Remaining range while charging
+The car sends a range of 0 while charging and switching off (0 is only valid with an empty battery). In this case the range is estimated from the soc using a table with the range for every 5 % soc (0, 5, ... 100 %):
+
+* Between two points the range is interpolated linearly and rounded to full km.
+* The table is learned while driving: once per soc change, the first valid range from the car corrects the two neighbouring points by 5 % of the error (`RANGE_LEARN_RATE`), weighted by their distance. So it adapts slowly and single unusual trips don't change it much.
+* It starts linear with 70 km at 100 %.
+* The table is stored as `rngtbl` in `state.json` on the SD card. Delete this entry to restart learning.
+* While the car reports a valid range (driving), this value is used unchanged. The estimate is also used after start and when the CAN bus stops, so the stored range is updated after charging.
+
+## evcc integration
+The car can be added to evcc as custom vehicle using the `ami/evcc/*` topics. The MQTT broker must be configured in evcc (`mqtt:` section).
+
+```yaml
+vehicles:
+  - name: woodstock
+    type: custom
+    title: Woodstock
+    capacity: 5.5 # kWh
+    features:
+      - streaming
+    soc:
+      source: mqtt
+      topic: ami/evcc/soc
+    range:
+      source: mqtt
+      topic: ami/evcc/range
+    odometer:
+      source: mqtt
+      topic: ami/evcc/odometer
+    status:
+      source: mqtt
+      topic: ami/evcc/status
+```
+
+* `features: streaming` is needed, otherwise evcc reads the soc only while charging (default poll mode `charging`) or at most every 60 min. With it the values are read in every cycle, as long as the vehicle is assigned to a loadpoint.
+* `status` is used by evcc to identify the vehicle when charging starts. The charging control itself uses the charger status.
+* evcc calculates the remaining charge time itself from soc, capacity and charge power. A remaining time from the vehicle is not used. The slower charging of the last ~10 % is not covered by evcc's model (it is fixed in the code and made for much higher charge powers), so plan with some margin.
+
+## Power and sleep
+* Running from USB / car power (without battery) the M5Stack never sleeps. After the car stops sending CAN data it gets power for about 2 more minutes and keeps sending MQTT messages, so the state `stopped` is reported.
+* Running from battery, it powers off 2 minutes after the last CAN frame (`M5.Power.powerOff()`). The CoreS3 (AXP2101) powers on again when USB / car power returns or by the power button.
 
 ## CAN data
 In CAN_information [CAN_information](./CAN_information/) you'll find the actual dbc/sym files which help decoding the can frames.
